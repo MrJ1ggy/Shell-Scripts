@@ -1,0 +1,107 @@
+#!/bin/ksh
+#############################################################################
+# Script Name: topsql.ksh
+# Purpose    : To find the top sqls by elapsed time , cpu usage and I/O in the database
+# Author(s)  : Himanshu Singh
+#
+# How to run :
+#
+# Syntax for
+# executing  : ./topsql.ksh
+##############################################################################
+
+. /home/oracle/.profile
+set -x
+echo ${1}
+export SID=${1}
+passwd=`cat /home/oracle/dba/scripts/.mpasswd`
+export Mssg=/home/oracle/dba/test/project/topsql.html
+:>${Mssg}
+export ErrorMail=myfile@test.com
+export SuccessMail=myfile@test.com
+
+ErrorMail()
+{
+echo "Error while running script:-> topsql.ksh in database:-> ${SID} " > ${Mssg}
+(
+      echo "From: oracle@`hostname`"
+      echo "Subject: Top sqls in database ${SID}"
+      echo "To: mymail@test.com"
+      echo "MIME-Version: 1.0"
+      echo "Content-Type: text/html"
+      cat ${Mssg}
+) | /usr/sbin/sendmail ${ErrorMail}
+exit 1
+}
+
+SuccessMail()
+{
+(
+      echo "From: oracle@`hostname`"
+      echo "Subject: Top sqls in database ${SID}"
+      echo "To: mymail@test.com"
+      echo "MIME-Version: 1.0"
+      echo "Content-Type: text/html"
+      cat ${Mssg}
+) | /usr/sbin/sendmail ${SuccessMail}
+}
+#END: SuccessMail
+
+check_script_syntax()
+{
+if [[ ${SID} == "" ]]
+then
+        echo "You must specify the ORACLE SID on the command line!" >> ${Mssg}
+        ErrorMail
+fi
+}
+#END: check_script_syntax
+
+test_connection()
+{
+test=`sqlplus  -s  monitor/${passwd}@${SID} <<EOF
+set echo off feedback off  heading off pagesize 0
+select name  from v\\$database;
+EOF`
+
+if [[ ${test} == ${SID} ]]
+then
+        echo "<p>connection to the database ${SID} is successfull! </p>" >> ${Mssg}
+else
+        echo "Error connecting to the database ${SID} Error Message : ${test}" >> ${Mssg}
+        ErrorMail
+fi
+}
+#END: test_connection
+
+topsql_elapsedtime()
+{
+echo "<p>Top Sqls order by elapsed times :</p> " >> ${Mssg}
+sqlplus  -s  monitor/${passwd}@${SID} <<EOF >> ${Mssg}
+set echo off feedback off
+set long 200000
+set markup html on
+SELECT * FROM (SELECT      distinct s.sql_id,
+                 sum(s.EXECUTIONS_DELTA) as "Executons",
+                 Round((sum(s.ELAPSED_TIME_DELTA) / 1000000),2) as "Elapsed Time(s)",
+                 Round((sum(s.ELAPSED_TIME_DELTA) / 1000000)/sum(s.EXECUTIONS_DELTA),2) as "Elapsed time per Exec(s)",
+                 s.module,s.parsing_schema_name
+                            FROM dba_hist_sqlstat s, dba_hist_snapshot sn
+           WHERE     sn.begin_interval_time > SYSDATE - 1
+                 AND sn.snap_id = s.snap_id
+                 AND s.executions_delta > 0
+                  group by s.sql_id,s.module,s.parsing_schema_name
+        ORDER BY 3 DESC)
+ WHERE ROWNUM < 6;
+set markup html off
+exit;
+EOF
+}
+#END: test_connection
+
+
+######################Script Flow #################
+check_script_syntax
+test_connection
+topsql_elapsedtime
+SuccessMail
