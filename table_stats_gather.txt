@@ -1,0 +1,78 @@
+#!/bin/ksh
+#############################################################################
+# Script Name: statsgather.ksh
+# Purpose    : This script is set up to automatically gather statistics on certain tables of the database
+# Author(s)  : Himanshu Singh
+# Syntax for
+# executing  : ./statsgather.ksh
+##############################################################################
+
+
+PARTITION_PREFIX=PARTITION_NAME
+CURRENT_YEAR=$(date | awk '{print $6;}')
+CURRENT_MONTH=`date +%m`
+
+PARTITION_NAME=$PARTITION_PREFIX$CURRENT_YEAR$CURRENT_MONTH
+
+echo $PARTITION_NAME
+
+sqlplus "/ as sysdba" <<EOF
+set serveroutput on;
+
+DECLARE
+
+V_PARTITION_POSITION NUMBER;
+V_PREV01_PARTPOS     NUMBER;
+V_PREV02_PARTPOS     NUMBER;
+V_PREV01_PARTNAME    VARCHAR2(21);
+V_PREV02_PARTNAME    VARCHAR2(21);
+STATS01		     VARCHAR2(50);
+STATS02		     VARCHAR2(50);
+STATS03		     VARCHAR2(50);
+STATS04		     VARCHAR2(50);
+STATS05		     VARCHAR2(50);
+	
+
+BEGIN
+
+select partition_position into V_PARTITION_POSITION from dba_tab_partitions where partition_name='$PARTITION_NAME';
+
+V_PREV01_PARTPOS:=V_PARTITION_POSITION-1;
+V_PREV02_PARTPOS:=V_PARTITION_POSITION-2;
+
+
+select partition_name into V_PREV01_PARTNAME from dba_tab_partitions where partition_position=V_PREV01_PARTPOS;
+select partition_name into V_PREV02_PARTNAME from dba_tab_partitions where partition_position=V_PREV02_PARTPOS;
+
+dbms_output.put_line('PARTITION_POSITION :' || V_PARTITION_POSITION || V_PREV01_PARTPOS ||V_PREV02_PARTPOS);
+dbms_output.put_line('PARTITION_NAME :' || V_PREV01_PARTNAME  ||  V_PREV02_PARTNAME );
+
+STATS01:='exec dbms_stats.gather_schema_stats(ownname =>'SCHEMA',TABNAME=>'TABLE1',PARTNAME='$PARTITION_NAME',cascade=>TRUE,degree=>10)';
+STATS02:='exec dbms_stats.gather_schema_stats(ownname =>'SCHEMA',TABNAME=>'TABLE2',PARTNAME='''||V_PREV01_PARTNAME||''',cascade=>TRUE,degree=>10)';
+STATS03:='exec dbms_stats.gather_schema_stats(ownname =>'SCHEMA',TABNAME=>'TABLE3',PARTNAME='''||V_PREV02_PARTNAME||''',cascade=>TRUE,degree=>10)';
+STATS04:='exec dbms_stats.gather_schema_stats(ownname =>'SCHEMA',TABNAME=>'TABLE4',cascade=>TRUE,degree=>5)';
+STATS05:='exec dbms_stats.gather_schema_stats(ownname =>'SCHEMA',TABNAME=>'TABLE5',cascade=>TRUE,degree=>1)';
+
+dbms_output.put_line( STATS01 ||' '|| STATS02 ||' '|| STATS03 ||' '|| STATS04 ||' '||STATS05);
+
+END;
+/
+EOF
+
+
+
+
+
+***********
+DECLARE
+
+V_PARTITIOn_POSITION NUMBER;
+
+BEGIN
+
+select partition_position into V_PARTITIOn_POSITION from dba_tab_partitions where partition_name='PARTITION_NAME201504';
+
+dbms_output.put_line('PARTITION_POSITION :'V_PARTITIOn_POSITION );
+
+END;
+/
