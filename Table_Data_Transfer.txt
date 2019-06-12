@@ -1,0 +1,230 @@
+
+#!/bin/ksh
+#############################################################################
+# Script Name: PRODPRD1_data_archive.ksh
+# Purpose    : To archive the data of 16 partitioned tables of TEST schema and copy to TESTARCH
+# Author(s)  : Himanshu Singh
+# Dependency : This script depends on certain other scripts
+# 1) /var/opt/oracle/admin/PRODPRD1/scripts/sample_expdp_PRODPRD1.par
+#                                                           
+#2) /var/opt/oracle/admin/PRODPRD1/scripts/sample_impdp_PRODPRD1.par
+#
+#
+# How to run : runs from cron if you have to run manually -- nohup sh -c #"/var/opt/oracle/admin/PRODPRD1/scripts/PRODPRD1_data_archive.ksh" &
+#
+# Syntax for
+# executing  : ./PRODPRD1_data_archive.ksh
+##############################################################################
+
+. /var/opt/oracle/env/PRODPRD1.env
+
+set -x
+
+<<EOF
+/******************************
+export parfile
+
+USERID=automate/automate_prod
+DIRECTORY=EXPDP_PRODPRD1_BKP
+DUMPFILE=expdp_TEST_YYMM.dmp
+LOGFILE=expdp_TEST_YYMM.log
+COMPRESSION=ALL
+TABLES=(TEST.CIRCUITTARGET:CIRCUITTARGET_YYMM,
+TEST.CIRCUIT:CIRCUIT_YYMM,
+TEST.LOCATION:LOCATION_YYMM,
+TEST.NETWORK:NETWORK_YYMM,
+TEST.PRICECHAPTER:PRICECHAPTER_YYMM,
+TEST.PRICEITEM:PRICEITEM_YYMM,
+TEST.PRICEPARAMETER:PRICEPARAMETER_YYMM,
+TEST.PRICETERMITEM:PRICETERMITEM_YYMM,
+TEST.PRODUCTDISCOUNT:PRODUCTDISCOUNT_YYMM,
+TEST.PRODUCTLOCATION:PRODUCTLOCATION_YYMM,
+TEST.PRODUCTMESSAGE:PRODUCTMESSAGE_YYMM,
+TEST.PRODUCTPARAMETER:PRODUCTPARAMETER_YYMM,
+TEST.PRODUCTPRICEPARAMETER:PRODUCTPRICEPARAMETER_YYMM,
+TEST.PRODUCTSEGMENT:PRODUCTSEGMENT_YYMM,
+TEST.SEGMENTDISCOUNT:SEGMENTDISCOUNT_YYMM,
+TEST.SEGMENTPARAMETER:SEGMENTPARAMETER_YYMM)
+
+
+import parfile
+USERID=automate/autmate_prod
+DIRECTORY=EXPDP_PRODPRD1_BKP
+DUMPFILE=expdp_TEST_YYMM.dmp
+LOGFILE=impdp_TESTarch_partitions_YYMM.log
+table_exists_action=APPEND
+remap_schema=TEST:TESTARCH
+remap_tablespace=TEST_YYMM:TESTARCH_YYMM
+
+*******************************************************************/
+EOF
+
+export SAMPLE_EXPDP_PARFILE=/var/opt/oracle/admin/PRODPRD1/scripts/sample_expdp_PRODPRD1.par
+export SAMPLE_IMPDP_PARFILE=/var/opt/oracle/admin/PRODPRD1/scripts/sample_impdp_PRODPRD1.par
+export CREATE_MONTHLY_PARFILE=/var/opt/oracle/admin/PRODPRD1/scripts/expdp_parfile/
+export MAIL_DBA=mymail@test.com
+
+#VAR_YYMM=1407
+#VAR_YYMM=`date +%y%m`
+#VAR_YYMM=1401 VAR_YYMM=1402 VAR_YYMM=1403 VAR_YYMM=1404 VAR_YYMM=1405 VAR_YYMM=1406
+
+
+VAR_YYMM=`date +%y%m`
+
+VAR_YYMM=`expr $VAR_YYMM - 1`
+
+if [ `date +%m` -eq 01 ] ; then
+    CUR_YEAR=`date +%y`
+    VAR_YYMM=`expr $CUR_YEAR - 1`12
+fi
+
+echo $VAR_YYMM
+
+sed -e "s/YYMM/${VAR_YYMM}/g" < $SAMPLE_EXPDP_PARFILE > ${CREATE_MONTHLY_PARFILE}expdp_${VAR_YYMM}.par
+
+sed -e "s/YYMM/${VAR_YYMM}/g" < $SAMPLE_IMPDP_PARFILE > ${CREATE_MONTHLY_PARFILE}impdp_${VAR_YYMM}.par
+
+
+sqlplus -s<<EOF
+/as sysdba
+set heading off feedback off linesize 400
+spool ${CREATE_MONTHLY_PARFILE}rowcount_${VAR_YYMM}.sql
+select  ' select count(*) from TESTarch.'|| table_name || ' partition (' || partition_name ||');'from dba_tab_partitions where table_owner ='TESTARCH' an
+d partition_name like '%_${VAR_YYMM}';
+spool off
+EOF
+
+sqlplus -s<<EOT
+/as sysdba
+set heading off
+spool ${CREATE_MONTHLY_PARFILE}rowcount_${VAR_YYMM}.log
+@${CREATE_MONTHLY_PARFILE}rowcount_${VAR_YYMM}.sql
+spool off
+EOT
+
+
+VAR_TARGET_ROWCOUNT=`cat ${CREATE_MONTHLY_PARFILE}rowcount_${VAR_YYMM}.log | grep -c 0 `
+
+if [ $VAR_TARGET_ROWCOUNT -eq 16 ]
+then
+        expdp parfile=${CREATE_MONTHLY_PARFILE}expdp_${VAR_YYMM}.par
+
+        VAR_EXPDP_ERR=`cat /a1000/AMS_MONTHLY_ACTIVITY/expdp_TEST_${VAR_YYMM}.log | grep -c "successfully completed"`
+
+        if [ $VAR_EXPDP_ERR -eq 1 ]
+        then
+
+          impdp parfile=${CREATE_MONTHLY_PARFILE}impdp_${VAR_YYMM}.par
+
+          VAR_IMPDP_ERR=`cat /a1000/AMS_MONTHLY_ACTIVITY/impdp_TESTarch_partitions_${VAR_YYMM}.log | grep -c "successfully completed" `
+
+                if [ $VAR_IMPDP_ERR -eq 1 ]; then
+
+                        mailx -s "AMS data archive successfull " $MAIL_DBA < /var/opt/oracle/admin/PRODPRD1/scripts/ams_data_archive.log
+                        exit;
+                else
+                        mailx -s "Critical error | ams data archival failed check log" $MAIL_DBA < /var/opt/oracle/admin/PRODPRD1/scripts/ams_data_archive.log
+                fi
+
+        fi
+fi
+
+
+
+exit;
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+######################################################################################################################
+#!/bin/ksh
+
+. /var/opt/oracle/env/PRODPRD1.env
+
+
+
+if false 
+then
+/******************************
+export parfile 
+
+USERID=automate/automate_prod
+DIRECTORY=EXPDP_PRODPRD1_BKP
+DUMPFILE=expdp_TEST_YYMM.dmp
+LOGFILE=expdp_TEST_YYMM.log
+TABLES=(TEST.CIRCUITTARGET:CIRCUITTARGET_YYMM,
+TEST.CIRCUIT:CIRCUIT_YYMM,
+TEST.LOCATION:LOCATION_YYMM,
+TEST.NETWORK:NETWORK_YYMM,
+TEST.PRICECHAPTER:PRICECHAPTER_YYMM,
+TEST.PRICEITEM:PRICEITEM_YYMM,
+TEST.PRICEPARAMETER:PRICEPARAMETER_YYMM,
+TEST.PRICETERMITEM:PRICETERMITEM_YYMM,
+TEST.PRODUCTDISCOUNT:PRODUCTDISCOUNT_YYMM,
+TEST.PRODUCTLOCATION:PRODUCTLOCATION_YYMM,
+TEST.PRODUCTMESSAGE:PRODUCTMESSAGE_YYMM,
+TEST.PRODUCTPARAMETER:PRODUCTPARAMETER_YYMM,
+TEST.PRODUCTPRICEPARAMETER:PRODUCTPRICEPARAMETER_YYMM,
+TEST.PRODUCTSEGMENT:PRODUCTSEGMENT_YYMM,
+TEST.SEGMENTDISCOUNT:SEGMENTDISCOUNT_YYMM,
+TEST.SEGMENTPARAMETER:SEGMENTPARAMETER_YYMM)
+
+
+import parfile
+USERID=automate/autmate_prod
+DIRECTORY=EXPDP_PRODPRD1_BKP
+DUMPFILE=expdp_TEST_YYMM.dmp
+LOGFILE=impdp_TESTarch_partitions_YYMM.log
+table_exists_action=APPEND
+remap_schema=TEST:TESTARCH
+remap_tablespace=TEST_YYMM:TESTARCH_YYMM
+
+
+
+*******************************************************************/
+fi
+
+export SAMPLE_EXPDP_PARFILE=/var/opt/oracle/admin/PRODPRD1/scripts/sample_expdp_PRODPRD1.par
+export SAMPLE_IMPDP_PARFILE=/var/opt/oracle/admin/PRODPRD1/scripts/sample_impdp_PRODPRD1.par
+export CREATE_MONTHLY_PARFILE=/var/opt/oracle/admin/PRODPRD1/scripts/expdp_parfile/
+
+VAR_YYMM=`date +%y%m`
+
+
+
+sed -e "s/YYMM/${VAR_YYMM}/g" < $SAMPLE_EXPDP_PARFILE > ${CREATE_MONTHLY_PARFILE}expdp_${VAR_YYMM}.par
+
+sed -e "s/YYMM/${VAR_YYMM}/g" < $SAMPLE_IMPDP_PARFILE > ${CREATE_MONTHLY_PARFILE}impdp_${VAR_YYMM}.par
+
+
+sqlplus -s<<EOF
+/as sysdba
+set heading off feedback off linesize 400
+spool ${CREATE_MONTHLY_PARFILE}rowcount_${VAR_YYMM}.sql
+select  ' select count(*) from TESTarch.'|| table_name || ' partition (' || partition_name ||');'from dba_tab_partitions where table_owner ='TESTARCH' and partition_name like '%_${VAR_YYMM}';
+spool off
+EOF
+
+sqlplus -s<<EOT
+/as sysdba
+set heading off
+spool ${CREATE_MONTHLY_PARFILE}rowcount_${VAR_YYMM}.log
+@${CREATE_MONTHLY_PARFILE}rowcount_${VAR_YYMM}.sql
+spool off
+EOT
+
+
+VAR_TARGET_ROWCOUNT=`more ${CREATE_MONTHLY_PARFILE}rowcount_${VAR_YYMM}.log | grep 0 | wc -l`
+
+if [ $VAR_TARGET_ROWCOUNT -eq 16 ]
+then
+	expdp parfile=${CREATE_MONTHLY_PARFILE}expdp_${VAR_YYMM}.par
+	
+	VAR_EXPDP_ERR=`more expdp_TEST_${VAR_YYMM}.log | grep -i ORA | wc -l`
+	
+	if [ $VAR_EXPDP_ERR -eq 0 ]
+	then
+	
+	impdp parfile=${CREATE_MONTHLY_PARFILE}impdp_${VAR_YYMM}.par
+	
+	VAR_IMPDP_ERR=`more impdp_TESTarch_partitions_${VAR_YYMM}.log | grep -i ORA | wc -l`
+	
+	fi
+fi
