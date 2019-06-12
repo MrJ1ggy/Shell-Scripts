@@ -1,0 +1,74 @@
+#!/bin/ksh
+#############################################################################
+# Script Name: backupdev.ksh
+# Purpose    : To automate the creation of table partitions as per an existing pattern of month and year
+# Author(s)  : Himanshu Singh
+# Syntax for
+# executing  : ./automate.kshksh
+##############################################################################
+
+
+. /var/opt/oracle/env/dev.env
+
+export TIMESTAMP=`date +%Y%m%d_%H%M`
+export DATA_PUMP_DIR=EXP
+export DUMPFILE_BASE_NAME=${TIMESTAMP}_${SID}_metadata_expdp
+#export DUMP_DIR=/var/opt/oracle/admin/scripts/backup
+#export DUMP_DIR=`${ORACLE_HOME}/bin/sqlplus -silent /nolog <<END
+            connect / as sysdba
+            set pagesize 0
+            set feedback off
+            set verify off
+            set heading off
+            set echo off
+            set trimspool on
+            SELECT directory_path
+              FROM dba_directories
+             WHERE directory_name='${DATA_PUMP_DIR}';
+            exit;
+            END`
+export FAIL_EMAIL_ADDRESS="mymail@test.com"
+export SUCCESS_EMAIL_ADDRESS="mymail@test.com"
+LOGFILE=/var/opt/oracle/admin/scripts/export.log
+
+echo "***********************************************************************" >> ${LOGFILE}
+echo "***  METADATA EXPORT of $SID Started at: "`date`"  ***"                  >> ${LOGFILE}
+echo "***********************************************************************" >> ${LOGFILE}
+
+
+expdp userid=\"/ as sysdba\" CONTENT=METADATA_ONLY DIRECTORY=${DATA_PUMP_DIR}  DUMPFILE=${DUMPFILE_BASE_NAME}.dmp LOGFILE=${DUMPFILE_BASE_NAME}.log FULL=Y
+
+
+echo "************************************************************************"  >> ${LOGFILE}
+echo "***  INLINE EXPORT Completed at: "`date`"  ***"                            >> ${LOGFILE}
+echo "************************************************************************"  >> ${LOGFILE}
+echo ""                                                                           >> ${LOGFILE}
+echo "************************************************************************" >> ${LOGFILE}
+echo "***  DUMP FILE LOCATION: ${DUMP_DIR}  ***"                                >> ${LOGFILE}
+echo "************************************************************************" >> ${LOGFILE}
+echo ""                                                                          >> ${LOGFILE}
+
+tail    ${DUMP_DIR}/${DUMPFILE_BASE_NAME}.log                                              >> ${LOGFILE}
+
+echo "************************************************************************"  >> ${LOGFILE}
+echo " Deleting old backup files older than 3 days "                             >> ${LOGFILE}
+echo "************************************************************************"  >> ${LOGFILE}
+
+
+cat ${LOGFILE}|grep "successfully completed"
+if [ $? -eq 0 ]
+then
+        find ${DUMP_DIR} -name "*${SID}_metadata_expdp.dmp" -mtime +2 -exec ls -l {} \;   >> ${LOGFILE}
+        find ${DUMP_DIR} -name "*${SID}_metadata_expdp.log" -mtime +2 -exec ls -l {} \;   >> ${LOGFILE}
+        find ${DUMP_DIR} -name "*${SID}_metadata_expdp.dmp" -mtime +2 -exec rm {} \;
+        find ${DUMP_DIR} -name "*${SID}_metadata_expdp.log" -mtime +2 -exec rm {} \;
+
+       # mailx -s "SUCCESS: Medata Data export backup for ${SID}" "mymail@test.com" < ${LOGFILE}
+       mailx -s "SUCCESS: Medata Data export backup for ${SID}" ${SUCCESS_EMAIL_ADDRESS} < ${LOGFILE}
+else
+        mailx -s "FAILURE: Medata Data export backup for ${SID}" ${FAIL_EMAIL_ADDRESS}  < ${LOGFILE}
+        #mailx -s "FAILURE: Medata Data export backup for ${SID}" "mymail@test.com" < ${LOGFILE}
+fi
+exit
+
+echo " END OF SCRIPT" >> ${LOGFILE}
