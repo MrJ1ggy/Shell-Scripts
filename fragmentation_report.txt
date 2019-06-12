@@ -1,0 +1,67 @@
+#!/bin/ksh
+
+#############################################################################
+# Script Name: check_fragmentation.ksh
+# Purpose    : This is space report for the fragmentation in databases
+#
+# Author(s)  : Himanshu Singh
+# Usage      : Run the script
+##############################################################################
+
+set -x
+set -A DBNAME DB1 DB2 Db3 DB4 DB5 DB6 DB7 DB8 DB9 DB10
+export MAIL_FILE=report_fragmentation.html
+
+:> report_fragmentation.html
+
+echo "<br> This is fragmentation report for all  dev/test exadata databases  " >>$MAIL_FILE
+echo "<br> The report pulls below information for all the databases " >>$MAIL_FILE
+echo "<br> 4. List of top 10 fragmented schemas in database by size(GB) " >>$MAIL_FILE
+
+
+
+for DB in ${DBNAME[*]}
+do
+. /home/oracle/env/$DB.env
+
+echo "<p>###########################################################################################################</p>"  >>$MAIL_FILE
+echo "<br><b> Database:"$DB"</b>" >>$MAIL_FILE
+
+sqlplus -s "/ as sysdba" << EOF >> $MAIL_FILE
+
+set linesize 200
+set pagesize 100
+col segment_name format a40
+col owner format a20
+col partition_name format a30
+
+!echo "<br><p> list of fragmented tablespaces </p>" >>$MAIL_FILE
+
+set markup html on
+
+WITH fragmentation
+     AS (  SELECT DBF.TS_NAME,
+                  dbf.size_dbf "DBF_GB",
+                  seg.size_Seg "SEG_GB",
+                  (dbf.size_dbf - seg.size_seg) "DIFF GB"
+             FROM (  SELECT tablespace_name "TS_NAME",
+                            ROUND (SUM (bytes) / 1024 / 1024 / 1024, 2)
+                               "SIZE_DBF"
+                       FROM dba_data_files
+                   GROUP BY tablespace_name) dbf,
+                  (  SELECT tablespace_name "TS_NAME",
+                            ROUND (SUM (bytes) / 1024 / 1024 / 1024, 2)
+                               "SIZE_SEG"
+                       FROM dba_segments
+                   GROUP BY tablespace_name) seg
+            WHERE DBF.TS_NAME = seg.ts_name and dbf.ts_name not like 'UNDO%'
+         ORDER BY 4 DESC)
+SELECT *
+  FROM fragmentation
+ WHERE ROWNUM < 20;
+
+set markup html off
+EOF
+done
+
+chmod 777 report_fragmentation.html
