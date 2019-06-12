@@ -1,0 +1,130 @@
+#!/bin/ksh
+
+#############################################################################
+# Script Name: Kill_idle_session.ksh
+# Purpose    : The sessions which are inactive for more than 30mins from this user USEr1 are killed by this script
+# Author(s)  : Himanshu Singh
+#
+# How to run : runs from cron if you have to run manually -- ./Kill_obsolete_session.ksh
+#
+# Syntax for
+# executing  : ./Kill_idle_session.ksh
+##############################################################################
+
+. /var/opt/oracle/env/devdb1.env
+
+#set -x
+
+MAIL_DBA=mymail@test.com
+SCRIPT_DIR=/var/opt/oracle/devdb1/Tools
+MAIL_FILE=${SCRIPT_DIR}/session_kill.html
+
+
+:>$MAIL_FILE
+
+echo   "Sessions killed in devdb1 " >> $MAIL_FILE
+
+sqlplus -s "/ as sysdba" << EOM >> $MAIL_FILE
+set markup html on
+spool report_kill.html
+select sid, status,logon_time,  username, machine, program from v\$session where status='INACTIVE' and  (last_call_et)/60  > 30 and username='USER1'  AND SERIAL# !=1 ;
+spool off
+EOM
+
+
+sqlplus -s "/ as sysdba" << EOF
+
+spool ${SCRIPT_DIR}/kill_sessions.sql
+select 'alter system kill session '||''''||sid||','||serial#||''''||' IMMEDIATE ;' from v\$session where status='INACTIVE' and  (last_call_et)/60  > 30 and username='WEB_SITE_SEGA'   AND SERIAL# !=1 ;
+spool off
+
+@${SCRIPT_DIR}/kill_sessions.sql
+
+EOF
+
+
+
+#Send email description of the killed sessions
+(
+      echo "From: `hostname`"
+      echo "Subject: Sessions killed in devdb1"
+      echo "To: $MAIL_DBA"
+      echo "MIME-Version: 1.0"
+      echo "Content-Type: text/html"
+      cat $MAIL_FILE
+) | /usr/sbin/sendmail $MAIL_DBA
+
+
+
+exit;
+***************************************************************************************************
+****************************************************************************************************
+*******************************************************************************************************
+
+
+
+
+final version
+
+
+#!/bin/ksh
+
+#############################################################################
+# Script Name: Kill_idle_session.ksh
+# Purpose    : The sessions which are inactive for more than 30mins from this user USER1 are killed by this script
+# Author(s)  : Himanshu Singh
+#
+# How to run : runs from cron if you have to run manually -- ./Kill_idle_session.ksh
+#
+# Syntax for
+# executing  : ./Kill_idle_session.ksh
+##############################################################################
+
+. /var/opt/oracle/env/devdb1.env
+
+set -x
+
+MAIL_DBA=mymail@test.com
+SCRIPT_DIR=/var/opt/oracle/devdb1/Tools
+MAIL_FILE=${SCRIPT_DIR}/session_kill.html
+
+
+:>$MAIL_FILE
+
+echo   "Sessions killed in DEVDB1 " >> $MAIL_FILE
+
+sqlplus -s "/ as sysdba" << EOM >> $MAIL_FILE
+set markup html on
+set pagesize 500
+col program format a20 word_wrapped
+select sid, status,logon_time,  username, machine, program,ROUND((last_call_et)/60) AS Idle_mins from v\$session where status='INACTIVE' and  (last_call_et)/
+60  > 30 and username='USER1'  AND SERIAL# !=1 order by 7 desc;
+EOM
+
+
+sqlplus -s "/ as sysdba" << EOF
+
+spool ${SCRIPT_DIR}/kill_sessions.sql
+select 'alter system kill session '||''''||sid||','||serial#||''''||' IMMEDIATE ;' from v\$session where status='INACTIVE' and  (last_call_et)/60  > 30 and u
+sername='WEB_SITE_SEGA'   AND SERIAL# !=1 ;
+spool off
+
+@${SCRIPT_DIR}/kill_sessions.sql
+
+EOF
+
+
+
+#Send email description of the killed sessions
+(
+      echo "From: `hostname`"
+      echo "Subject: Sessions killed in devdb1"
+      echo "To: $MAIL_DBA"
+      echo "MIME-Version: 1.0"
+      echo "Content-Type: text/html"
+      cat $MAIL_FILE
+) | /usr/sbin/sendmail $MAIL_DBA
+
+
+
+exit;
