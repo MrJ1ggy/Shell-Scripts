@@ -1,0 +1,202 @@
+#Author: Himanshu Singh
+#Script: partition_drop.ksh
+#Usage: partition_drop.ksh Database_name Schema.table_name Days
+#Example: Partition_drop.ksh SCHEMA1.TABLE1 14 this will maintain a retention of 2 weeks for this table , it will keep today's parttion + 14 days of partition and drop
+the rest behind
+#Functions: this script uses various functions to maintain certain tasks , a brief description is given below
+#
+#
+set -xv
+#========Set below Variables as per your environment=============
+
+export LOG_DIR=/var/opt/oracle/L3DBA/log
+export SUCCESS_MAIL_DBA=mymail@test.com
+export FAILURE_MAIL_DBA=mymail@test.com
+export LOGFILE=${LOG_DIR}/Partition_drop_`echo $1_$2`_`date +%F.%H.%M.%S`.log
+export DROP_PARTITION_DDL=${LOG_DIR}/Partition_drop_`echo $1_$2`_`date +%F.%H.%M.%S`.sql
+export PART_FILE=${LOG_DIR}/part_file_`echo $1_$2`_`date +%F.%H.%M.%S`.txt
+export DROP_TBS_LIST="("
+export DROP_TBS_QUERY=${LOG_DIR}/drop_empty_tablespace_`echo $1_$2`_`date +%F.%H.%M.%S`.sql
+export ORATAB=/etc/oratab
+export USERID=DBA
+export PASSWD=#######
+export ORACLE_HOME=`cat ${ORATAB} | grep ${1} | cut -d':' -f2`
+#================================================================
+
+
+echo "Script starts " >> ${LOGFILE}
+export database_name=${1}
+export full_table_name=${2}
+export retention_days=${3}
+
+Check_database_exists_on_host()
+{
+export CHECK_COUNT2=`grep -ic ${database_name} "${ORATAB}"`
+if [ ${CHECK_COUNT2} -ne 1 ] ; then
+echo "The database doesn't exist on the host or its entry is not present in oratab " >> ${LOGFILE}
+ErrorMail
+fi
+}
+# END: Check_database_exists_on_host
+
+Seperate_Schema_and_Table()
+{
+export CHECK_COUNT1=`echo "${full_table_name}" | tr -cd '.' | wc -c`
+if [ ${CHECK_COUNT1} -ne 1 ] ; then
+       echo " Incorrect value passed to the script it should be schema_name.table_name , check script description for more info " >>  ${LOGFILE}
+        ErrorMail
+fi
+
+export OWNER=`echo ${full_table_name} | cut -d'.' -f1`
+export TABLE_NAME=`echo ${full_table_name} | cut -d'.' -f2`
+echo $OWNER
+echo $TABLE_NAME
+}
+# END: Seperate_Schema_and_Table
+
+ErrorMail()
+{
+ (       echo "From: Partition_Drop_Script"
+        echo "Subject: Partition Drop failed"
+        echo "To: $FAILURE_MAIL_DBA"
+        echo "MIME-Version: 1.0"
+        echo "Content-Type: text"
+        cat $LOGFILE
+    ) | /usr/lib/sendmail $FAILURE_MAIL_DBA
+exit
+}
+# END: ErrorMail
+
+find_current_partition()
+{
+${ORACLE_HOME}/bin/sqlplus -s ${USERID}/${PASSWD}@${database_name} << EOF
+set heading off feedback off pagesize 0
+spool ${PART_FILE}
+WITH xml
+     AS (SELECT XMLTYPE (
+                   DBMS_XMLGEN.GETXML ('SELECT PARTITION_NAME,PARTITION_POSITION,HIGH_VALUE,TABLESPACE_NAME  FROM DBA_TAB_PARTITIONS where table_name=upper(''${TABLE_NA
+ME}'') and table_owner=upper(''${OWNER}'')'))
+                   AS xml
+           FROM DUAL),
+PARSED_XML AS (
+SELECT EXTRACTVALUE (xs.object_value, '/ROW/PARTITION_NAME') AS PARTITION_NAME,
+        EXTRACTVALUE (xs.object_value, '/ROW/PARTITION_POSITION') AS PARTITION_POSITION,
+       EXTRACTVALUE (xs.object_value, '/ROW/HIGH_VALUE') AS HIGH_VALUE,
+       EXTRACTVALUE (xs.object_value, '/ROW/TABLESPACE_NAME') AS TABLESPACE_NAME
+  FROM xml x ,TABLE (XMLSEQUENCE (EXTRACT (x.xml, '/ROWSET/ROW'))) xs)
+  select partition_name||':'||tablespace_name  from parsed_xml where to_date(substr(HIGH_VALUE,11,11),'YYYY-MM-DD')<SYSDATE -${retention_days};
+spool off
+exit;
+EOF
+}
+# END: find_current_partition
+
+
+report_partition()
+{
+for file_input in  "${filecontent[@]}"
+do
+export PARTITION_NAME=`echo ${file_input} | cut -d':' -f1`
+echo ${PARTITION_NAME}  >> ${LOGFILE}
+done
+}
+
+# END: report_partition
+
+generate_drop_partition_ddl()
+{
+if [ "${filecontent[0]}" = "" ] ; then
+        echo " No partitions to be dropped within the specified retention period of ${retention_days} days " >>  ${LOGFILE}
+        ErrorMail
+fi
+for file_input in  "${filecontent[@]}"
+do
+export PARTITION_NAME=`echo ${file_input} | cut -d':' -f1`
+echo "ALTER TABLE ${full_table_name} drop partition ${PARTITION_NAME} update indexes;"  >> ${DROP_PARTITION_DDL}
+done
+}
+
+# END: generate_drop_partition_ddl
+
+drop_partition()
+{
+${ORACLE_HOME}/bin/sqlplus -s ${USERID}/${PASSWD}@${database_name} << EOF >> ${LOGFILE}
+set echo on timing on
+@${DROP_PARTITION_DDL}
+exit;
+EOF
+}
+# END: drop_partition
+
+drop_tablespace_query()
+{
+for file_input in  "${filecontent[@]}"
+do
+export TABLESPACE_NAME=`echo ${file_input} | cut -d':' -f2`
+DROP_TBS_LIST=${DROP_TBS_LIST}"'"${TABLESPACE_NAME}"',"
+done
+
+DROP_TBS_LIST=${DROP_TBS_LIST}"'XYZ')"
+export DROP_TR= `${DROP_TBS_LIST} | tr -d '\'`
+#Checking count of the tablespace segments , those with zero will only be dropped
+${ORACLE_HOME}/bin/sqlplus -s   ${USERID}/${PASSWD}@${database_name} << EOF >> ${LOGFILE}
+set echo on
+set linesize 100
+select tablespace_name,count(*) segment_count from dba_segments where tablespace_name in ${DROP_TBS_LIST} group by tablespace_name ;
+set heading off echo off
+spool ${DROP_TBS_QUERY}
+SELECT    'drop tablespace '|| tablespace_name|| ' including contents and datafiles;'  FROM dba_tablespaces t WHERE tablespace_name IN ${DROP_TBS_LIST} and tablespace_name not in ( SELECT distinct tablespace_name  FROM dba_segments WHERE tablespace_name IN ${DROP_TBS_LIST} );
+spool off
+EOF
+}
+
+# END: drop_tablespace_query
+
+drop_tablespace()
+{
+
+${ORACLE_HOME}/bin/sqlplus -s ${USERID}/${PASSWD}@${database_name} << EOF >> ${LOGFILE}
+set heading on echo on timing on
+@${DROP_TBS_QUERY}
+exit;
+EOF
+
+}
+
+# END: drop_tablespace
+SuccessMail()
+{
+ (       echo "From: Partition_Drop_Script"
+        echo "Subject: Partition Drop Successfull"
+        echo "To: $SUCCESS_MAIL_DBA"
+        echo "MIME-Version: 1.0"
+        echo "Content-Type: text"
+        cat $LOGFILE
+    ) | /usr/lib/sendmail $SUCCESS_MAIL_DBA
+exit
+}
+# END: SuccessMail
+
+#Check_database_exists_on_host
+Seperate_Schema_and_Table
+find_current_partition
+#################################
+filecontent=( `cat "${PART_FILE}" `)
+#################################
+echo "Now the name of all the partitions to be dropped:" >> ${LOGFILE}
+report_partition
+generate_drop_partition_ddl
+echo "Now dropping all the partitions"  >> ${LOGFILE}
+drop_partition
+echo "Now the names of all the tablespaces whose partition segments are dropped." >> ${LOGFILE}
+echo "If the tablespace has a segment count then they will not be dropped" >> ${LOGFILE}
+drop_tablespace_query
+echo "Tablespaces to be dropped:"  >> ${LOGFILE}
+export DROP_TBS_COUNT=`cat ${DROP_TBS_QUERY} | grep "no rows selected" | wc -l`
+if [ `cat ${DROP_TBS_QUERY} | grep "no rows selected" | wc -l` = 1 ] ; then
+        echo " No tablespaces found with segment count 0 " >>  ${LOGFILE}
+        SuccessMail
+fi
+drop_tablespace
+SuccessMail
+ErrorMail
