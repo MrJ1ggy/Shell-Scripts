@@ -1,0 +1,36 @@
+#!/bin/ksh
+#############################################################################
+# Script Name: cron_seggregation.ksh
+# Purpose    : This script will segrregate all the scripts of a crontab based on certain keywords into different 	#		groups...and generate a file cron_new
+#		However whichever scripts are not part of those keywords will be left in a seperate file file_final
+# Author(s)  : Himanshu Singh
+# Syntax for
+# executing  : ./cron_seggregation.ksh
+#crontab -l > cron_bkp
+##############################################################################
+
+
+
+
+set -x
+pth="/home/oracle/dba/hima/cron"
+file=${pth}/cron_bkp
+
+A=(label1 label2 label3 label4 label5 label5 label6 label7 label8 label9 label10)
+
+print "Cron begins \n \n " > cron_new
+
+for db in "${A[@]}"
+        do
+                        val=`more ${file} | grep ${db} | wc -l`
+                        if [ ${val} != 0 ];
+                        then
+                        print "#Monitoring ${db} \n \n" >> cron_new
+                        more ${file} | grep ${db} >> cron_new
+                        print " \n\n" >> cron_new
+                        sed -e "/${db}/d"  ${file} > file_${db}
+                        file=${pth}/file_${db}
+                fi
+done
+
+mv ${file} ${pth}/file_final
