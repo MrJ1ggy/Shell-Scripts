@@ -1,0 +1,33 @@
+#!/bin/ksh
+#############################################################################
+# Script Name: cleararchive.ksh
+# Purpose    : To automate the deletion of non usable archive log
+# Author(s)  : Himanshu Singh
+# Syntax for
+# executing  : ./cleararchive.ksh
+##############################################################################
+
+
+source /home/oracle/.profile
+
+ClearArchlogs()
+{
+export ORACLE_SID=$sid
+
+
+$ORACLE_HOME/bin/rman target /<<EOF
+crosscheck archivelog all;
+delete noprompt archivelog until time 'trunc(sysdate)-2';
+exit;
+EOF
+}
+
+
+
+DBS=$(ps -ef | grep pmon | grep -v grep | awk '{print $NF}' | cut -d_ -f3)
+if [ "$DBS " != " " ]; then
+    for sid in $DBS
+    do
+                ClearArchlogs;
+        done
+fi
