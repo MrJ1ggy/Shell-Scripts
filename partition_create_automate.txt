@@ -1,0 +1,87 @@
+#!/bin/ksh
+#
+#Author: Himanshu Singh
+#Script: partition_create.ksh
+#Usage: partition_create.ksh
+#Example: Partition_create.ksh this script will create 7 days ahead of partitions from the existing table SCHEMA1.TABLE1 in SCHEMA101T database
+
+#========Set below Variables as per your environment=============
+
+export LOG_DIR=/var/opt/oracle/L3DBA/log
+export SUCCESS_MAIL_DBA=mymail@test.com
+export FAILURE_MAIL_DBA=mymail@test.com
+export LOGFILE=${LOG_DIR}/Partition_create_`echo $DB_NAME1`_`date +%F.%H.%M.%S`.log
+export ORATAB=/etc/oratab
+export USERID=DBA
+export PASSWD=#######
+export DB_NAME=SCHEMA101P
+export ORACLE_HOME=`cat ${ORATAB} | grep ${DB_NAME} | cut -d':' -f2`
+
+
+export MAX_VALUE_PARTITION_POSITION=`${ORACLE_HOME}/bin/sqlplus -s   ${USERID}/${PASSWD}@${DB_NAME} << EOF
+set heading off pagesize 0
+select max(partition_position) from dba_tab_partitions where table_name='TABLE1' and table_owner='SCHEMA1';
+EOF`
+
+
+export TBS_MAXVALUE=`${ORACLE_HOME}/bin/sqlplus -s ${USERID}/${PASSWD}@${DB_NAME} << EOF
+set heading off pagesize 0
+select tablespace_name from dba_tab_partitions where partition_position=${MAX_VALUE_PARTITION_POSITION};
+EOF`
+
+
+export TBS_VALUE=`${ORACLE_HOME}/bin/sqlplus -s ${USERID}/${PASSWD}@${DB_NAME} << EOF
+set heading off pagesize 0
+select ''||(substr(tablespace_name,10)+1)||'' from dba_tab_partitions where partition_position=((select partition_position from dba_tab_partitions where table_name='KEY
+_VALUE' and table_owner='SCHEMA1' and partition_name='${TBS_MAXVALUE}')-1);
+EOF`
+
+export NEXT_TBS_NAME=TABLE1${TBS_VALUE}
+
+
+create_partition()
+{
+${ORACLE_HOME}/bin/sqlplus -s ${USERID}/${PASSWD}@${DB_NAME} << EOF >> ${LOGFILE}
+set echo on timing on
+create tablespace ${NEXT_TBS_NAME};
+execute automate.partition.splitpartitions(5001,7,'${NEXT_TBS_NAME}','${NEXT_TBS_NAME}');
+exit;
+EOF
+
+}
+# END: create_partition
+
+SuccessMail()
+{
+if [ `cat ${LOGFILE} | grep "ORA-" | wc -l` -ne 0 ] ; then
+        echo " ora errors found during the execution of the script " >>  ${LOGFILE}
+        ErrorMail
+fi
+
+ (       echo "From: Partition_Create_SCHEMA101P_Script"
+        echo "Subject: Partition Creation Successfull in SCHEMA101P for SCHEMA1.TABLE1 table"
+        echo "To: $SUCCESS_MAIL_DBA"
+        echo "MIME-Version: 1.0"
+        echo "Content-Type: text"
+        cat $LOGFILE
+    ) | /usr/lib/sendmail $SUCCESS_MAIL_DBA
+exit
+}
+# END: SuccessMail
+
+ErrorMail()
+{
+ (       echo "From: Partition_Create_SCHEMA101P_Script"
+        echo "Subject: Partition Creation failed in SCHEMA101P"
+        echo "To: $FAILURE_MAIL_DBA"
+        echo "MIME-Version: 1.0"
+        echo "Content-Type: text"
+        cat $LOGFILE
+    ) | /usr/lib/sendmail $FAILURE_MAIL_DBA
+exit
+}
+# END: ErrorMail
+
+
+create_partition
+SuccessMail
