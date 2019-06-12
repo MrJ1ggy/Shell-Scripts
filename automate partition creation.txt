@@ -1,0 +1,43 @@
+
+#!/bin/ksh
+#############################################################################
+# Script Name: automate.ksh
+# Purpose    : To automate the creation of table partitions as per an existing pattern of month and year
+# Author(s)  : Himanshu Singh
+# Syntax for
+# executing  : ./automate.kshksh
+##############################################################################
+
+PART_NUM=21795
+HOUR=17
+ZERO=0
+DATE=5
+
+i=1
+max=458
+while [ $i -lt $max ]
+ do
+                HOUR=`expr $HOUR + 1`
+        PART_NUM=`expr $PART_NUM + 1`
+
+        if [ $HOUR -gt 23 ]; then
+                HOUR=0
+                DATE=`expr $DATE + 1`
+        fi
+        if [ $HOUR -lt 10 ]; then
+                TEMP_HOUR=$ZERO$HOUR
+        else
+                TEMP_HOUR=$HOUR
+        fi
+        if [ $DATE -lt 10 ]; then
+                TEMP_DATE=$ZERO$DATE
+        else
+                TEMP_DATE=$DATE
+        fi
+    echo "ALTER TABLE SCHEMA.TABLE_NAME SPLIT PARTITION TABLE_NAME999999 AT ( TO_DATE(' 2014-09-$TEMP_DATE $TEMP_HOUR:00:00', 'SYYYY-MM-DD HH24:MI
+:SS', 'NLS_CALENDAR=GREGORIAN'))INTO( PARTITION TABLE_NAME0$PART_NUM TABLESPACE SCHEMA_TS,PARTITION TABLE_NAME999999 TABLESPACE SCHEMA_TS) parallel 20;"
+
+echo "\n"
+i=`expr $i + 1`
+done
+
